@@ -1,0 +1,7 @@
+pandas 
+flask 
+flask-cors 
+requests 
+openpyxl 
+python-dotenv 
+pymongo --only-binary all.py
