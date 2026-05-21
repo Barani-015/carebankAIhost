@@ -19,21 +19,31 @@ except ImportError:
     RAG_AVAILABLE = False
 
 app = Flask(__name__)
-CORS(app, origins=['https://carebankhost-1.onrender.com', 'http://localhost:3000'])
+# Update your CORS configuration
+CORS(app, origins=['https://carebank-ai.onrender.com','https://carebankhost-1.onrender.com', 'http://localhost:3000'])
 
 # ============================================
 # AI Provider Configuration
 # ============================================
 # Hugging Face Configuration
-# HF_API_TOKEN = os.getenv("HF_TOKEN", process.env.HF_TOKEN)
-HF_API_TOKEN = os.getenv("HF_TOKEN" )  # ✅ Correct Python syntax
-HF_MODEL_NAME = "meta-llama/Llama-3.2-3B-Instruct"  # Recommended for CSV Q&A
+HF_API_TOKEN = os.getenv("HF_TOKEN")  # ✅ Correct Python syntax
+HF_MODEL_NAME = "meta-llama/Llama-3.2-3B-Instruct"
 
-# Ollama Configuration (Fallback)
-OLLAMA_URL = "http://127.0.0.1:11434"
-OLLAMA_MODEL_NAME = "qwen2.5:1.5b"
+# Hosted AI Service Configuration (Replaces Ollama)
+# Replace this URL with your actual hosted AI service endpoint
+HOSTED_AI_URL = os.getenv("HOSTED_AI_URL", "https://api.groq.com/openai/v1/chat/completions")  # Example: Groq
+HOSTED_AI_API_KEY = os.getenv("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")  # Your hosted AI API key
+HOSTED_AI_MODEL = os.getenv("HOSTED_AI_MODEL", "llama3-70b-8192")  # Model name for hosted service
 
-# Provider priority: 'huggingface' first, then 'ollama' as fallback
+# Alternative: If using OpenRouter
+# HOSTED_AI_URL = "https://openrouter.ai/api/v1/chat/completions"
+# HOSTED_AI_MODEL = "meta-llama/llama-3.2-3b-instruct"
+
+# Alternative: If using Together AI
+# HOSTED_AI_URL = "https://api.together.xyz/v1/chat/completions"
+# HOSTED_AI_MODEL = "meta-llama/Llama-3.2-3B-Instruct-Turbo"
+
+# Provider priority: 'huggingface' first, then 'hosted_ai' as fallback
 AI_PROVIDER = "huggingface"  # Start with Hugging Face
 
 BASE_DIR = Path(__file__).parent.parent
@@ -290,60 +300,104 @@ def query_huggingface_api(prompt: str, user_id: str = None) -> Dict[str, Any]:
         }
 
 # ============================================
-# Ollama API Function (Fallback)
+# Hosted AI API Function (Replaces Ollama)
 # ============================================
-def query_ollama_api(prompt: str, user_id: str = None) -> Dict[str, Any]:
-    """Query Ollama local API as fallback"""
+def query_hosted_ai_api(prompt: str, user_id: str = None) -> Dict[str, Any]:
+    """Query hosted AI service as fallback (replaces Ollama)"""
     
     start_time = time.time()
     
-    logger.info(f"🦙 [Ollama Fallback] Sending request to {OLLAMA_MODEL_NAME}")
+    # Check if hosted AI URL is configured
+    if not HOSTED_AI_URL or not HOSTED_AI_API_KEY:
+        logger.warning("⚠️ Hosted AI service not configured")
+        return {
+            "success": False,
+            "response": "Hosted AI service not configured",
+            "error": "missing_config",
+            "provider": "hosted_ai"
+        }
+    
+    logger.info(f"🌐 [Hosted AI] Sending request to {HOSTED_AI_URL}")
+    logger.info(f"   🤖 Model: {HOSTED_AI_MODEL}")
     logger.info(f"   📝 Prompt length: {len(prompt)} characters")
     
-    try:
-        resp = requests.post(
-            f"{OLLAMA_URL}/api/generate",
-            json={
-                "model": OLLAMA_MODEL_NAME,
-                "prompt": prompt,
-                "stream": False,
-                "options": {"temperature": 0.1, "num_predict": 512}
+    # Format for OpenAI-compatible API (Groq, OpenRouter, Together AI)
+    headers = {
+        "Authorization": f"Bearer {HOSTED_AI_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    
+    payload = {
+        "model": HOSTED_AI_MODEL,
+        "messages": [
+            {
+                "role": "system",
+                "content": "You are a helpful financial data analyst. Answer based on the provided data accurately and concisely."
             },
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ],
+        "temperature": 0.1,
+        "max_tokens": 512
+    }
+    
+    try:
+        response = requests.post(
+            HOSTED_AI_URL,
+            headers=headers,
+            json=payload,
             timeout=60
         )
         
         api_duration = (time.time() - start_time) * 1000
         
-        if resp.status_code == 200:
-            result = resp.json()
-            response_text = result.get('response', '')
+        if response.status_code == 200:
+            result = response.json()
             
-            logger.info(f"✅ [Ollama] Success - {api_duration:.2f}ms")
+            # Handle OpenAI-compatible response format
+            if 'choices' in result and len(result['choices']) > 0:
+                response_text = result['choices'][0]['message']['content']
+            elif 'response' in result:
+                response_text = result['response']
+            else:
+                response_text = str(result)
+            
+            logger.info(f"✅ [Hosted AI] Success - {api_duration:.2f}ms")
             logger.info(f"   📥 Response preview: {response_text[:150]}...")
             
             return {
                 "success": True,
                 "response": response_text,
-                "model": OLLAMA_MODEL_NAME,
-                "provider": "ollama",
+                "model": HOSTED_AI_MODEL,
+                "provider": "hosted_ai",
                 "api_duration_ms": api_duration
             }
         else:
-            logger.error(f"❌ [Ollama] Error {resp.status_code}: {resp.text}")
+            logger.error(f"❌ [Hosted AI] Error {response.status_code}: {response.text[:200]}")
             return {
                 "success": False,
-                "response": f"Ollama error: {resp.status_code}",
-                "error": resp.text,
-                "provider": "ollama"
+                "response": f"Hosted AI error: {response.status_code}",
+                "error": response.text,
+                "provider": "hosted_ai"
             }
             
-    except Exception as e:
-        logger.error(f"❌ [Ollama] Exception: {str(e)}")
+    except requests.exceptions.Timeout:
+        logger.error(f"❌ [Hosted AI] Request timeout after 60 seconds")
         return {
             "success": False,
-            "response": f"Ollama error: {str(e)}",
+            "response": "Hosted AI timeout",
+            "error": "timeout",
+            "provider": "hosted_ai"
+        }
+    except Exception as e:
+        logger.error(f"❌ [Hosted AI] Exception: {str(e)}")
+        return {
+            "success": False,
+            "response": f"Hosted AI error: {str(e)}",
             "error": str(e),
-            "provider": "ollama"
+            "provider": "hosted_ai"
         }
 
 # ============================================
@@ -351,7 +405,7 @@ def query_ollama_api(prompt: str, user_id: str = None) -> Dict[str, Any]:
 # ============================================
 def query_ai_with_csv(user_id: str, question: str) -> Dict[str, Any]:
     """
-    Main function that tries Hugging Face first, then falls back to Ollama
+    Main function that tries Hugging Face first, then falls back to Hosted AI
     """
     logger.info(f"="*60)
     logger.info(f"📨 NEW QUERY RECEIVED")
@@ -394,10 +448,10 @@ def query_ai_with_csv(user_id: str, question: str) -> Dict[str, Any]:
         logger.info(f"🚀 Attempting Hugging Face API first...")
         result = query_huggingface_api(prompt, user_id)
         
-        # If Hugging Face fails, fall back to Ollama
+        # If Hugging Face fails, fall back to Hosted AI
         if not result.get('success', False):
-            logger.warning(f"⚠️ Hugging Face failed, falling back to Ollama...")
-            result = query_ollama_api(prompt, user_id)
+            logger.warning(f"⚠️ Hugging Face failed, falling back to Hosted AI...")
+            result = query_hosted_ai_api(prompt, user_id)
         
         total_time = (time.time() - total_start_time) * 1000
         
@@ -494,11 +548,12 @@ def health_check():
         'status': 'running', 
         'primary_model': HF_MODEL_NAME,
         'primary_provider': 'huggingface',
-        'fallback_model': OLLAMA_MODEL_NAME,
-        'fallback_provider': 'ollama',
+        'fallback_model': HOSTED_AI_MODEL,
+        'fallback_provider': 'hosted_ai',
+        'fallback_url': HOSTED_AI_URL,
         'rag_available': RAG_AVAILABLE,
         'huggingface_configured': bool(HF_API_TOKEN and HF_API_TOKEN != ""),
-        'ollama_url': OLLAMA_URL
+        'hosted_ai_configured': bool(HOSTED_AI_URL and HOSTED_AI_API_KEY)
     })
 
 @app.route('/user/cache/invalidate', methods=['POST'])
@@ -533,10 +588,10 @@ def provider_status():
             'available': bool(HF_API_TOKEN and HF_API_TOKEN != "")
         },
         'fallback': {
-            'name': 'ollama',
-            'model': OLLAMA_MODEL_NAME,
-            'url': OLLAMA_URL,
-            'available': None  # Would need to test connection
+            'name': 'hosted_ai',
+            'model': HOSTED_AI_MODEL,
+            'url': HOSTED_AI_URL,
+            'configured': bool(HOSTED_AI_URL and HOSTED_AI_API_KEY)
         }
     })
 
@@ -552,14 +607,15 @@ if __name__ == '__main__':
     print(f"   PRIMARY: Hugging Face")
     print(f"   Model: {HF_MODEL_NAME}")
     print(f"   Token Configured: {'✅ YES' if HF_API_TOKEN and HF_API_TOKEN != '' else '❌ NO'}")
-    print(f"\n   FALLBACK: Ollama (Local)")
-    print(f"   Model: {OLLAMA_MODEL_NAME}")
-    print(f"   URL: {OLLAMA_URL}")
+    print(f"\n   FALLBACK: Hosted AI Service")
+    print(f"   Model: {HOSTED_AI_MODEL}")
+    print(f"   URL: {HOSTED_AI_URL}")
+    print(f"   API Key Configured: {'✅ YES' if HOSTED_AI_API_KEY else '❌ NO'}")
     print(f"\n🔍 RAG Available: {RAG_AVAILABLE}")
     print(f"💻 Server: http://0.0.0.0:5000")
     print(f"{'='*70}")
     print(f"\n📋 Available Endpoints:")
-    print(f"   POST /chat/transaction - Chat with CSV data (Hugging Face → Ollama fallback)")
+    print(f"   POST /chat/transaction - Chat with CSV data (Hugging Face → Hosted AI fallback)")
     print(f"   GET  /user/csv_files - List user's CSV files")
     print(f"   GET  /health - Health check")
     print(f"   POST /user/cache/invalidate - Clear cache")
@@ -570,6 +626,10 @@ if __name__ == '__main__':
         print(f"⚠️  WARNING: Hugging Face token not configured!")
         print(f"   Set environment variable: export HF_TOKEN='your_token_here'")
         print(f"   Get your token from: https://huggingface.co/settings/tokens")
-        print(f"   Server will fall back to Ollama if Hugging Face fails\n")
+    
+    if not HOSTED_AI_API_KEY:
+        print(f"⚠️  WARNING: Hosted AI API key not configured!")
+        print(f"   Set environment variable: export HOSTED_AI_API_KEY='your_api_key_here'")
+        print(f"   Set HOSTED_AI_URL to your service endpoint")
     
     app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
