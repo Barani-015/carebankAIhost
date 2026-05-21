@@ -19,7 +19,7 @@ except ImportError:
     RAG_AVAILABLE = False
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, origins=['https://carebankhost-1.onrender.com', 'http://localhost:3000'])
 
 # ============================================
 # AI Provider Configuration
