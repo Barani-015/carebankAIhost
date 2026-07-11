@@ -1,0 +1,21 @@
+date,description,category,amount,status
+2026-06-01,Client payment - Nimbus Co,Revenue,4200,success
+2026-06-03,AWS hosting,Infrastructure,-312.5,success
+2026-06-05,Office supplies,Operations,-89.2,success
+2026-06-10,Client payment - Halo Ltd,Revenue,2600,success
+2026-06-14,Payroll,Payroll,-6100,success
+2026-06-18,Ad spend - Meta,Marketing,-540,success
+2026-06-20,Refund - Client XYZ,Revenue,1500,success
+2026-06-22,Server upgrade,Infrastructure,-2500,failed
+2026-06-25,Consulting fee - ABC Corp,Revenue,3500,success
+2026-06-28,Software license,Operations,-799,pending
+2026-07-01,Client payment - TechCorp,Revenue,5800,success
+2026-07-03,Cloud storage overage,Infrastructure,-450,failed
+2026-07-05,Marketing campaign - Google,Marketing,-1200,success
+2026-07-08,Legal fees - Law Firm,Operations,-800,pending
+2026-07-10,Investment dividend,Revenue,1200,success
+2026-07-12,Maintenance costs,Operations,-350,failed
+2026-07-15,Client payment - StartupX,Revenue,3200,success
+2026-07-18,Office rent,Operations,-2100,success
+2026-07-20,IT equipment,Infrastructure,-1500,pending
+2026-07-22,Consulting revenue,Revenue,2800,success
