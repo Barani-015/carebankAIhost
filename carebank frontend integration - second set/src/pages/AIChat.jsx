@@ -274,98 +274,152 @@ export default function SmartBudgeting() {
     }, 14);
   }
 
-  // Send chat to AI backend
-  async function sendToAI(userMessage) {
-    const authToken = getAuthToken();
-    
-    // Log user prompt to console (matching working model)
-    console.log(`[USER PROMPT - ${selectedAgent.toUpperCase()}]`, userMessage);
-    
-    const currentAgent = AGENTS[selectedAgent];
-    
-    // Determine which endpoint to use
-    const apiUrl = `${API_URL}${currentAgent.endpoint}`;
-    
-    // Get user ID
-    const userId = user?.id || user?._id || user?.email || 'anonymous';
-    
-    const requestBody = {
-      user_id: userId,
-      question: userMessage
-    };
-    
-    console.log(`📡 Calling AI service: ${apiUrl}`);
-    console.log(`📤 Request body:`, requestBody);
-    console.log(`🔑 Auth token:`, authToken ? 'Present' : 'Missing');
+ async function sendToAI(userMessage) {
+  const authToken = getAuthToken();
+  
+  if (!authToken) {
+    setMood("concerned");
+    const errorMsg = "Please log in to use the AI assistant.";
+    setMessages((m) => [...m, { role: "assistant", text: errorMsg }]);
+    setTimeout(() => setMood("idle"), 1600);
+    setIsLoading(false);
+    return;
+  }
 
+  // Get user ID - try multiple sources
+  let userId = null;
+  
+  // 1. Try from user object
+  if (user) {
+    userId = user.id || user._id || user.userId || user.uuid || user.email;
+  }
+  
+  // 2. Try from localStorage
+  if (!userId) {
     try {
-      const response = await fetch(apiUrl, {
-        method: 'POST',
+      const storedUser = localStorage.getItem('user');
+      if (storedUser) {
+        const parsed = JSON.parse(storedUser);
+        userId = parsed.id || parsed._id || parsed.userId || parsed.uuid || parsed.email;
+      }
+    } catch (e) {}
+  }
+  
+  // 3. Try from token - decode JWT to get user ID
+  if (!userId && authToken) {
+    try {
+      // JWT tokens are base64 encoded
+      const parts = authToken.split('.');
+      if (parts.length === 3) {
+        const payload = JSON.parse(atob(parts[1]));
+        userId = payload.id || payload._id || payload.userId || payload.uuid || payload.sub || payload.email;
+      }
+    } catch (e) {}
+  }
+  
+  // 4. If still no userId, fetch from backend
+  if (!userId) {
+    try {
+      const response = await fetch(`${API_URL}/auth/me`, {
         headers: {
-          'Content-Type': 'application/json',
-          ...(authToken && { 'Authorization': `Bearer ${authToken}` })
-        },
-        body: JSON.stringify(requestBody)
+          'Authorization': `Bearer ${authToken}`
+        }
       });
-
       const data = await response.json();
-      console.log(`📥 Response:`, data);
-
-      if (response.status === 401) {
-        throw new Error('Authentication failed. Please log in again.');
-      }
-
-      if (response.status === 429) {
-        throw new Error('Rate limit exceeded. Please wait a moment and try again.');
-      }
-
-      if (!response.ok) {
-        throw new Error(data.message || data.error || `Server error: ${response.status}`);
-      }
-
-      if (data.success) {
-        // Build AI response with context
-        let aiResponse = data.response || data.analysis?.response || data.message;
-        
-        // If we have CSV info, add it to the response (matching working model)
-        if (data.csv_files_loaded) {
-          aiResponse = `📊 Based on ${data.total_files || 0} CSV file(s) (${data.total_rows || 0} transactions):\n\n${aiResponse}`;
+      if (data.success && data.user) {
+        userId = data.user.id || data.user._id || data.user.userId || data.user.uuid;
+        // Store for future use
+        if (userId) {
+          try {
+            localStorage.setItem('userId', userId);
+          } catch (e) {}
         }
-
-        // Determine mood from response
-        let responseMood = "idle";
-        const lowerResponse = aiResponse.toLowerCase();
-        if (lowerResponse.includes('recommend') || lowerResponse.includes('suggestion') || lowerResponse.includes('opportunity')) {
-          responseMood = "happy";
-        } else if (lowerResponse.includes('alert') || lowerResponse.includes('concern') || lowerResponse.includes('warning')) {
-          responseMood = "concerned";
-        }
-
-        return { text: aiResponse, mood: responseMood };
-      } else {
-        throw new Error(data.response || data.message || 'Unknown error from AI service');
       }
-
-    } catch (error) {
-      console.error('AI Chat Error:', error);
-      
-      // Fallback to local agent response if API fails
-      console.log('⚠️ Falling back to local agent response');
-      const fallbackReply = currentAgent.buildFallbackReply(userMessage, transactions);
-      
-      // If there's a network error, mention it but still provide fallback
-      let fallbackText = fallbackReply.text;
-      if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
-        fallbackText = `⚠️ AI service is currently unavailable. Using offline mode:\n\n${fallbackText}`;
-      } else if (error.message.includes('Authentication')) {
-        fallbackText = `🔐 ${error.message}\n\n${fallbackText}`;
-      } else if (error.message.includes('Rate limit')) {
-        fallbackText = `⏳ ${error.message}\n\n${fallbackText}`;
-      }
-      
-      return { text: fallbackText, mood: fallbackReply.mood || "concerned" };
+    } catch (e) {
+      console.error('Failed to fetch user from backend:', e);
     }
   }
+  
+  // 5. Last resort - use email or 'anonymous'
+  if (!userId) {
+    userId = user?.email || 'anonymous';
+  }
+
+  const currentAgent = AGENTS[selectedAgent];
+  
+  // Determine which endpoint to use
+  const apiUrl = `${API_URL}${currentAgent.endpoint}`;
+  const requestBody = {
+    user_id: userId,
+    question: userMessage
+  };
+
+  console.log(`📡 Calling AI service: ${apiUrl}`);
+  console.log(`📤 Request body:`, requestBody);
+  console.log(`👤 User ID:`, userId);
+  console.log(`🔑 Auth token:`, authToken ? 'Present' : 'Missing');
+
+  try {
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authToken}`
+      },
+      body: JSON.stringify(requestBody)
+    });
+
+    const data = await response.json();
+    console.log(`📥 Response:`, data);
+
+    if (response.status === 401) {
+      throw new Error('Authentication failed. Please log in again.');
+    }
+
+    if (response.status === 429) {
+      throw new Error('Rate limit exceeded. Please wait a moment and try again.');
+    }
+
+    if (!response.ok) {
+      throw new Error(data.message || data.error || `Server error: ${response.status}`);
+    }
+
+    if (data.success) {
+      let aiResponse = data.response || data.analysis?.response || data.message;
+      
+      if (data.csv_files_loaded) {
+        aiResponse = `📊 Based on ${data.total_files || 0} CSV file(s) (${data.total_rows || 0} transactions):\n\n${aiResponse}`;
+      }
+
+      let responseMood = "idle";
+      if (aiResponse.toLowerCase().includes('recommend') || aiResponse.toLowerCase().includes('suggestion')) {
+        responseMood = "happy";
+      } else if (aiResponse.toLowerCase().includes('alert') || aiResponse.toLowerCase().includes('concern')) {
+        responseMood = "concerned";
+      }
+
+      return { text: aiResponse, mood: responseMood };
+    } else {
+      throw new Error(data.response || data.message || 'Unknown error from AI service');
+    }
+
+  } catch (error) {
+    console.error('AI Chat Error:', error);
+    
+    console.log('⚠️ Falling back to local agent response');
+    const fallbackReply = currentAgent.buildFallbackReply(userMessage, transactions);
+    
+    let fallbackText = fallbackReply.text;
+    if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+      fallbackText = `⚠️ AI service is currently unavailable. Using offline mode:\n\n${fallbackText}`;
+    } else if (error.message.includes('Authentication')) {
+      fallbackText = `🔐 ${error.message}\n\n${fallbackText}`;
+    }
+    
+    return { text: fallbackText, mood: fallbackReply.mood || "concerned" };
+  }
+}
+
 
   async function handleSend(e) {
     e?.preventDefault();

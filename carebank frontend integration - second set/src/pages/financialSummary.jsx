@@ -1,6 +1,6 @@
 // pages/SmartBudgeting.jsx
-import { useState } from "react";
-import { useData } from "../context/DataContext";
+import { useState, useEffect } from "react";
+import { useAuth } from "../context/AuthContext";
 import Panel from "../components/Panel";
 import { TrendingDown, TrendingUp, AlertCircle, CheckCircle, Target, Calendar } from "lucide-react";
 
@@ -10,22 +10,80 @@ function currency(n) {
 }
 
 export default function SmartBudgeting() {
-  const { transactions } = useData();
+  const { user, token } = useAuth();
+  
+  // Local state for transactions (like Dashboard)
+  const [transactions, setTransactions] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [budgetPeriod, setBudgetPeriod] = useState("monthly");
 
-  // Calculate spending by category
+  // Fetch transactions manually (same as Dashboard)
+  const fetchTransactionsManually = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      
+      const authToken = localStorage.getItem('token') || localStorage.getItem('authToken');
+      
+      if (!authToken) {
+        console.error('❌ No token found');
+        setError('Authentication required');
+        setLoading(false);
+        return;
+      }
+      
+      console.log('📡 Fetching transactions for SmartBudgeting...');
+      
+      const response = await fetch('https://carebankhost-1.onrender.com/api/transactions', {
+        headers: {
+          'Authorization': `Bearer ${authToken}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      console.log('📦 SmartBudgeting data:', data);
+      
+      if (data.success) {
+        const txns = data.transactions || [];
+        console.log(`✅ Loaded ${txns.length} transactions for financial summary`);
+        setTransactions(txns);
+      } else {
+        setError(data.message || 'Failed to fetch transactions');
+        setTransactions([]);
+      }
+    } catch (err) {
+      console.error('❌ Fetch error:', err);
+      setError(err.message);
+      setTransactions([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Fetch on mount
+  useEffect(() => {
+    fetchTransactionsManually();
+  }, []);
+
+  // Calculate spending by category - use type === 'debit'
   const byCategory = {};
   transactions
-    .filter((t) => t.amount < 0)
+    .filter((t) => t.type === 'debit')
     .forEach((t) => {
-      byCategory[t.category] = (byCategory[t.category] || 0) + Math.abs(t.amount);
+      byCategory[t.category] = (byCategory[t.category] || 0) + t.amount;
     });
   
   const categories = Object.entries(byCategory).sort((a, b) => b[1] - a[1]);
   const totalSpend = categories.reduce((sum, [_, amt]) => sum + amt, 0);
 
-  // Calculate monthly average (assuming daily data for simplicity)
+  // Calculate monthly average
   const avgMonthlySpend = totalSpend / (transactions.length > 0 ? Math.max(1, Math.round(transactions.length / 30)) : 1);
 
   // Budget recommendations based on spending patterns
@@ -56,6 +114,35 @@ export default function SmartBudgeting() {
 
   const recommendations = getBudgetRecommendations();
 
+  // Show loading state
+  if (loading) {
+    return (
+      <div className="p-8 max-w-[1600px] mx-auto h-full overflow-y-auto flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-amber-500 mx-auto"></div>
+          <p className="text-bone/60 mt-4">Loading financial summary...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Show error state
+  if (error) {
+    return (
+      <div className="p-8 max-w-[1600px] mx-auto h-full overflow-y-auto">
+        <Panel className="p-12 text-center" label="Error loading data">
+          <p className="text-red-500 mb-4">{error}</p>
+          <button 
+            onClick={fetchTransactionsManually}
+            className="inline-flex items-center gap-2 bg-amber-500 hover:bg-amber-400 text-void-950 text-sm font-semibold px-5 py-2.5 rounded-md transition-colors"
+          >
+            Retry
+          </button>
+        </Panel>
+      </div>
+    );
+  }
+
   return (
     <div className="p-8 max-w-[1600px] mx-auto h-full overflow-y-auto">
       {/* Header */}
@@ -66,6 +153,9 @@ export default function SmartBudgeting() {
         <h1 className="text-3xl font-light text-bone mt-1">
           Summary of your financial health and spending patterns
         </h1>
+        <p className="text-bone/30 text-sm mt-1">
+          {transactions.length > 0 ? `${transactions.length} transactions analyzed` : 'No transactions yet'}
+        </p>
       </div>
 
       {/* Summary Cards */}
